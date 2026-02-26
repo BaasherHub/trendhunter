@@ -1,0 +1,18 @@
+{
+  "name": "trendhunter-clawpump-bot",
+  "version": "1.0.0",
+  "description": "Daily meme coin launcher based on trending topics",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node src/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0",
+    "@google/generative-ai": "^0.21.0",
+    "axios": "^1.6.0",
+    "form-data": "^4.0.0",
+    "node-cron": "^3.0.3"
+  }
+}
