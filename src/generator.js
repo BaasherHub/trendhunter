@@ -2,7 +2,11 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-export async function generateTokenConcept(trendingTopic) {
+async function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function generateTokenConcept(trendingTopic, retries = 4) {
   console.log(`🤖 Generating animal coin concept for: "${trendingTopic}"`);
 
   const prompt = `You are a viral meme coin creator specializing in animal-themed Solana tokens. You understand what makes animal coins succeed: strong community identity, cute/funny narrative, and a mascot people want to root for.
@@ -27,26 +31,41 @@ Rules:
 - Symbol must be clearly animal-related (CAPY, BONK, DOGE, etc.)
 - DESCRIPTION MUST BE UNDER 400 CHARACTERS — this is critical`;
 
-  const message = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 1024,
-    messages: [{ role: "user", content: prompt }],
-  });
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const message = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+      });
 
-  const raw = message.content[0].text.trim();
-  const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-  const concept = JSON.parse(cleaned);
+      const raw = message.content[0].text.trim();
+      const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      const concept = JSON.parse(cleaned);
 
-  // Hard safety trim
-  if (concept.description.length > 490) {
-    concept.description = concept.description.slice(0, 487) + "...";
+      if (concept.description.length > 490) {
+        concept.description = concept.description.slice(0, 487) + "...";
+      }
+
+      console.log(`✅ Animal coin concept generated:`);
+      console.log(`   Name: ${concept.name}`);
+      console.log(`   Symbol: $${concept.symbol}`);
+      console.log(`   Animal: ${concept.animalType}`);
+      console.log(`   Description (${concept.description.length} chars)`);
+
+      return concept;
+
+    } catch (err) {
+      const isOverloaded = err.status === 529 || err.message?.includes("overloaded");
+      const isRateLimit = err.status === 429;
+
+      if ((isOverloaded || isRateLimit) && attempt < retries) {
+        const waitSecs = attempt * 15; // 15s, 30s, 45s
+        console.log(`   ⚠️  Claude overloaded (attempt ${attempt}/${retries}), retrying in ${waitSecs}s...`);
+        await sleep(waitSecs * 1000);
+        continue;
+      }
+      throw err;
+    }
   }
-
-  console.log(`✅ Animal coin concept generated:`);
-  console.log(`   Name: ${concept.name}`);
-  console.log(`   Symbol: $${concept.symbol}`);
-  console.log(`   Animal: ${concept.animalType}`);
-  console.log(`   Description (${concept.description.length} chars): ${concept.description.slice(0, 80)}...`);
-
-  return concept;
 }

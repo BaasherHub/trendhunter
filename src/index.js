@@ -6,7 +6,6 @@ import { uploadImage, launchToken, checkEarnings, checkTreasury } from "./clawpu
 import { savelaunch, loadHistory, printSummary } from "./logger.js";
 import fs from "fs";
 
-// ─── Validate environment on startup ───────────────────────────────────────
 function validateEnv() {
   const required = ["ANTHROPIC_API_KEY", "SOLANA_WALLET_ADDRESS"];
   const missing = required.filter((k) => !process.env[k]);
@@ -18,7 +17,10 @@ function validateEnv() {
   console.log("✅ Environment variables validated");
 }
 
-// ─── Main daily job ─────────────────────────────────────────────────────────
+async function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 async function runDailyLaunch() {
   console.log("\n" + "═".repeat(60));
   console.log(`🚀 TRENDHUNTER BOT — ${new Date().toISOString()}`);
@@ -37,27 +39,25 @@ async function runDailyLaunch() {
   let imagePath = null;
 
   try {
-    // Step 1: Check ClawPump treasury health
+    // Step 1: Check treasury
     console.log("\n[1/6] Checking ClawPump treasury...");
     try {
       const treasury = await checkTreasury();
       console.log(`   Treasury status: ${treasury.status}`);
-      console.log(`   Launches affordable: ${treasury.wallet?.launchesAffordable}`);
       if (treasury.status !== "healthy") {
-        console.warn("⚠️  Treasury not healthy — launch may fail, proceeding anyway");
+        console.warn("⚠️  Treasury not healthy — will self-fund if needed");
       }
     } catch {
-      console.log("   Treasury check skipped (non-critical)");
+      console.log("   Treasury check skipped");
     }
 
-    // Step 2: Get trending topics
-    console.log("\n[2/6] Fetching trending topics...");
-    const topics = await getTrendingTopics("US");
+    // Step 2: Get trending animal topic
+    console.log("\n[2/6] Fetching trending animal topics...");
+    const topics = await getTrendingTopics();
     const trend = pickBestTopic(topics);
     record.trend = trend;
-    console.log(`   Selected trend: "${trend}"`);
 
-    // Step 3: Generate token concept with Claude
+    // Step 3: Generate coin concept (with built-in retries)
     console.log("\n[3/6] Generating token concept...");
     const concept = await generateTokenConcept(trend);
     record.name = concept.name;
@@ -65,60 +65,63 @@ async function runDailyLaunch() {
 
     // Step 4: Generate banner image
     console.log("\n[4/6] Generating banner image...");
-    imagePath = await generateTokenImage(concept.imagePrompt, concept.symbol);
+    imagePath = await generateTokenImage(concept.imagePrompt, concept.symbol, concept.name);
 
-    // Step 5: Upload image to ClawPump
+    // Step 5: Upload image
     console.log("\n[5/6] Uploading image...");
     const imageUrl = await uploadImage(imagePath);
 
-    // Step 6: Launch token
+    // Step 6: Launch token (with retry on overload)
     console.log("\n[6/6] Launching token...");
-    const launch = await launchToken(concept, imageUrl);
+    let launch;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        launch = await launchToken(concept, imageUrl);
+        break;
+      } catch (err) {
+        const isOverloaded = err.status === 529 || err.message?.includes("overloaded");
+        if (isOverloaded && attempt < 3) {
+          console.log(`   ⚠️  Overloaded, retrying in ${attempt * 20}s...`);
+          await sleep(attempt * 20000);
+          continue;
+        }
+        throw err;
+      }
+    }
+
     record.pumpUrl = launch.pumpUrl;
     record.mintAddress = launch.mintAddress;
     record.success = true;
 
-    // Print social template
+    // Social template
     console.log("\n" + "─".repeat(60));
-    console.log("🐦 SOCIAL TEMPLATE (post this on Twitter/X):");
+    console.log("🐾 SOCIAL TEMPLATE:");
     console.log("─".repeat(60));
-    console.log(`🚀 Riding the $${trend.toUpperCase()} wave!`);
-    console.log(`\n$${concept.symbol} — ${concept.name} just launched via @clawpumptech`);
+    console.log(`🚀 Meet $${concept.symbol} — ${concept.name}!`);
+    console.log(`\n${concept.description}`);
     console.log(`\nCA: ${launch.mintAddress}`);
-    console.log(`\nTrade: ${launch.pumpUrl}`);
-    console.log(`\n#ClawPump #Solana #${concept.symbol}`);
+    console.log(`Trade: ${launch.pumpUrl}`);
+    console.log(`\n#${concept.symbol} #Solana #ClawPump #MemeCoin`);
     console.log("─".repeat(60));
 
-    // Check earnings
+    // Earnings
     try {
       const earnings = await checkEarnings();
-      console.log(`\n💰 EARNINGS UPDATE:`);
-      console.log(`   Total earned: ${earnings.totalEarned} SOL`);
-      console.log(`   Pending: ${earnings.totalPending} SOL`);
-      console.log(`   Total sent: ${earnings.totalSent} SOL`);
-    } catch {
-      console.log("   (Earnings check skipped)");
-    }
+      console.log(`\n💰 EARNINGS: ${earnings.totalEarned} SOL earned | ${earnings.totalPending} SOL pending`);
+    } catch {}
 
   } catch (error) {
     record.error = error.message;
-    console.error(`\n❌ Launch failed: ${error.message}`);
-
-    // Handle rate limit gracefully
     if (error.response?.status === 429) {
-      const retryHours = error.response.data?.retryAfterHours || "unknown";
-      console.log(`⏳ Rate limited. Can retry in ${retryHours} hours.`);
-      record.error = `Rate limited — retry in ${retryHours}h`;
+      const h = error.response.data?.retryAfterHours || "?";
+      console.log(`⏳ Rate limited — already launched today. Next in ${h}h.`);
+      record.error = `Rate limited — retry in ${h}h`;
+    } else {
+      console.error(`\n❌ Launch failed: ${error.message}`);
     }
   } finally {
-    // Clean up temp image file
-    if (imagePath && fs.existsSync(imagePath)) {
-      fs.unlinkSync(imagePath);
-    }
-
-    // Save record regardless of success/failure
+    if (imagePath && fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
     savelaunch(record);
-
     const status = record.success ? "✅ SUCCESS" : "❌ FAILED";
     console.log(`\n${status} — ${new Date().toISOString()}`);
     console.log("═".repeat(60) + "\n");
@@ -131,25 +134,16 @@ validateEnv();
 const args = process.argv.slice(2);
 
 if (args.includes("--now") || process.env.RUN_NOW === "true") {
-  // Run immediately (useful for testing)
-  console.log("🔥 Running immediately (--now or RUN_NOW=true detected)");
+  console.log("🔥 Running immediately (--now or RUN_NOW=true)");
   runDailyLaunch();
 } else if (args.includes("--history")) {
-  // Print launch history
-  const history = loadHistory();
-  printSummary(history);
+  printSummary(loadHistory());
 } else {
-  // Schedule to run every day at 9:30 AM EST (14:30 UTC) — peak US trading hours
   const CRON_SCHEDULE = process.env.CRON_SCHEDULE || "30 14 * * *";
   console.log(`⏰ TrendHunter Bot started — scheduled: ${CRON_SCHEDULE} (UTC = 9:30 AM EST)`);
   console.log(`   Launches at peak US trading hours daily`);
   console.log(`   Agent ID: ${process.env.CLAWPUMP_AGENT_ID || "trendhunter-001"}`);
   console.log(`   Wallet: ${process.env.SOLANA_WALLET_ADDRESS?.slice(0, 8)}...`);
-
-  cron.schedule(CRON_SCHEDULE, runDailyLaunch, {
-    timezone: "UTC",
-  });
-
-  // Keep the process alive
+  cron.schedule(CRON_SCHEDULE, runDailyLaunch, { timezone: "UTC" });
   console.log("\n✅ Bot is running. Waiting for scheduled time...");
 }
