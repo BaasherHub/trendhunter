@@ -8,20 +8,28 @@ const BASE_URL = "https://clawpump.tech";
 const AGENT_ID = process.env.CLAWPUMP_AGENT_ID || "trendhunter-001";
 const AGENT_NAME = process.env.CLAWPUMP_AGENT_NAME || "TrendHunter";
 const WALLET_ADDRESS = process.env.SOLANA_WALLET_ADDRESS;
-const TWITTER_HANDLE = process.env.TWITTER_HANDLE || null;
+
+// Twitter handle — just the username, no @ or URL
+// ClawPump expects raw handle like "Thebaasher" not "x.com/Thebaasher"
+const TWITTER_HANDLE = process.env.TWITTER_HANDLE
+  ? process.env.TWITTER_HANDLE.replace("@", "").replace(/.*x\.com\//i, "").replace(/.*twitter\.com\//i, "").trim()
+  : null;
+
+// Dev buy — how much SOL to buy your own token at launch to seed market cap
+// Set DEV_BUY_SOL=0.1 in Railway for a ~$15 initial buy (raises mcap above 2.5k)
+// Set to 0 to disable. Default 0.05 SOL
+const DEV_BUY_SOL = parseFloat(process.env.DEV_BUY_SOL || "0.03");
 
 export async function uploadImage(imagePath) {
   console.log(`📤 Uploading image to ClawPump...`);
   const ext = path.extname(imagePath).toLowerCase();
   const mimeType = [".jpg", ".jpeg"].includes(ext) ? "image/jpeg" :
                    ext === ".gif" ? "image/gif" : "image/png";
-
   const form = new FormData();
   form.append("image", fs.createReadStream(imagePath), {
     filename: `banner_${Date.now()}.png`,
     contentType: mimeType,
   });
-
   try {
     const response = await axios.post(`${BASE_URL}/api/upload`, form, {
       headers: form.getHeaders(),
@@ -50,12 +58,14 @@ export async function launchToken(concept, imageUrl) {
     walletAddress: WALLET_ADDRESS,
   };
 
+  // Add Twitter handle — just raw username
   if (TWITTER_HANDLE) {
-    payload.twitter = TWITTER_HANDLE.replace("@", "");
-    console.log(`   Twitter: @${payload.twitter}`);
+    payload.twitter = TWITTER_HANDLE;
+    console.log(`   Twitter: @${TWITTER_HANDLE}`);
   }
 
   console.log(`   Name: ${payload.name} | Symbol: ${payload.symbol} | Desc: ${payload.description.length} chars`);
+  if (DEV_BUY_SOL > 0) console.log(`   Dev buy: ${DEV_BUY_SOL} SOL`);
 
   // Try gasless first
   try {
@@ -70,7 +80,7 @@ export async function launchToken(concept, imageUrl) {
     return response.data;
   } catch (err) {
     if (err.response?.status === 503) {
-      console.log(`⚠️  Gasless unavailable — auto-paying 0.03 SOL...`);
+      console.log(`⚠️  Gasless unavailable — auto-paying...`);
       return await launchWithAutoPayment(payload, err.response.data);
     }
     if (err.response) {
@@ -82,33 +92,30 @@ export async function launchToken(concept, imageUrl) {
 
 async function launchWithAutoPayment(payload, errorData) {
   const paymentWallet = errorData?.suggestions?.paymentFallback?.selfFunded?.paymentWallet;
-  const amountSol = errorData?.suggestions?.paymentFallback?.selfFunded?.amountSol || 0.03;
+  const baseSol = errorData?.suggestions?.paymentFallback?.selfFunded?.amountSol || 0.03;
 
-  if (!paymentWallet) {
-    throw new Error("Could not extract payment wallet from ClawPump error response");
-  }
+  if (!paymentWallet) throw new Error("Could not extract payment wallet from ClawPump response");
 
-  // Check if we have private key for auto-payment
   if (!process.env.SOLANA_PRIVATE_KEY) {
-    // Fall back to manual TX_SIGNATURE if set
     const txSignature = process.env.TX_SIGNATURE;
-    if (txSignature) {
-      console.log(`   Using manual TX_SIGNATURE...`);
-      return await submitSelfFunded(payload, txSignature);
-    }
-    console.error(`\n${"═".repeat(60)}`);
-    console.error(`💸 PAYMENT NEEDED: Send ${amountSol} SOL to ${paymentWallet}`);
-    console.error(`   Then add TX_SIGNATURE to Railway Variables`);
-    console.error(`   Or set SOLANA_PRIVATE_KEY for fully automatic payments`);
-    console.error(`${"═".repeat(60)}\n`);
-    throw new Error(`Payment required. Set SOLANA_PRIVATE_KEY for auto-payment.`);
+    if (txSignature) return await submitSelfFunded(payload, txSignature);
+    throw new Error(`SOLANA_PRIVATE_KEY not set. Send ${baseSol} SOL to ${paymentWallet} and set TX_SIGNATURE.`);
   }
 
-  // Auto-send SOL from wallet
-  console.log(`   Auto-sending ${amountSol} SOL for launch...`);
-  const txSignature = await sendSol(paymentWallet, amountSol);
+  // Total = base launch fee + dev buy
+  const totalSol = baseSol + DEV_BUY_SOL;
+  console.log(`   Auto-sending ${totalSol} SOL (${baseSol} launch + ${DEV_BUY_SOL} dev buy)...`);
+  const txSignature = await sendSol(paymentWallet, totalSol);
 
-  return await submitSelfFunded(payload, txSignature);
+  // Wait for confirmation
+  await sleep(5000);
+
+  // Include dev buy in payload if set
+  const finalPayload = DEV_BUY_SOL > 0
+    ? { ...payload, devBuySol: DEV_BUY_SOL }
+    : payload;
+
+  return await submitSelfFunded(finalPayload, txSignature);
 }
 
 async function submitSelfFunded(payload, txSignature) {
@@ -125,9 +132,7 @@ async function submitSelfFunded(payload, txSignature) {
     console.log(`   pump.fun: ${response.data.pumpUrl}`);
     return response.data;
   } catch (err) {
-    if (err.response) {
-      console.error(`   Self-funded error: ${JSON.stringify(err.response.data)}`);
-    }
+    if (err.response) console.error(`   Self-funded error: ${JSON.stringify(err.response.data)}`);
     throw err;
   }
 }
@@ -143,4 +148,8 @@ export async function checkEarnings() {
 export async function checkTreasury() {
   const response = await axios.get(`${BASE_URL}/api/treasury`, { timeout: 10000 });
   return response.data;
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
