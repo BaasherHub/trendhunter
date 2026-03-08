@@ -9,11 +9,16 @@ const AGENT_ID = process.env.CLAWPUMP_AGENT_ID || "trendhunter-001";
 const AGENT_NAME = process.env.CLAWPUMP_AGENT_NAME || "TrendHunter";
 const WALLET_ADDRESS = process.env.SOLANA_WALLET_ADDRESS;
 
-// Twitter handle — just the username, no @ or URL
-// ClawPump expects raw handle like "Thebaasher" not "x.com/Thebaasher"
-const TWITTER_HANDLE = process.env.TWITTER_HANDLE
-  ? process.env.TWITTER_HANDLE.replace("@", "").replace(/.*x\.com\//i, "").replace(/.*twitter\.com\//i, "").trim()
-  : null;
+// Twitter handle — strip everything, send ONLY the raw username
+// ClawPump expects: "Thebaasher"  NOT "@Thebaasher" or "x.com/Thebaasher"
+const raw = process.env.TWITTER_HANDLE || "";
+const TWITTER_HANDLE = raw
+  .replace(/https?:\/\//gi, "")   // remove https://
+  .replace(/x\.com\//gi, "")      // remove x.com/
+  .replace(/twitter\.com\//gi, "") // remove twitter.com/
+  .replace(/@/g, "")              // remove @
+  .split(/[/?#]/)[0]              // strip any query params
+  .trim() || null;
 
 // Dev buy — how much SOL to buy your own token at launch to seed market cap
 // Set DEV_BUY_SOL=0.1 in Railway for a ~$15 initial buy (raises mcap above 2.5k)
@@ -61,7 +66,9 @@ export async function launchToken(concept, imageUrl) {
   // Add Twitter handle — just raw username
   if (TWITTER_HANDLE) {
     payload.twitter = TWITTER_HANDLE;
-    console.log(`   Twitter: @${TWITTER_HANDLE}`);
+    console.log(`   Twitter handle: "${TWITTER_HANDLE}" (raw env value was: "${process.env.TWITTER_HANDLE}")`);
+  } else {
+    console.log(`   ⚠️  No Twitter handle set — add TWITTER_HANDLE=Thebaasher to Railway vars`);
   }
 
   console.log(`   Name: ${payload.name} | Symbol: ${payload.symbol} | Desc: ${payload.description.length} chars`);

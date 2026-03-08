@@ -139,8 +139,13 @@ if (args.includes("--now") || process.env.RUN_NOW === "true") {
 } else if (args.includes("--history")) {
   printSummary(loadHistory());
 } else {
-  const CRON_SCHEDULE = process.env.CRON_SCHEDULE || "30 14 * * *";
-  console.log(`⏰ TrendHunter Bot started — scheduled: ${CRON_SCHEDULE} (UTC = 9:30 AM EST)`);
+  // 16:01 UTC = 12:01 PM EST
+  // We use :01 (1 min past the hour) as a buffer because ClawPump enforces
+  // a strict 24-hour cooldown. Launching at exactly :00 risks hitting the
+  // 23h59m mark and getting a rate-limit error. The extra minute guarantees
+  // we are always safely past the 24h window.
+  const CRON_SCHEDULE = process.env.CRON_SCHEDULE || "1 16 * * *";
+  console.log(`⏰ TrendHunter Bot started — scheduled: ${CRON_SCHEDULE} (UTC = 12:01 PM EST)`);
   console.log(`   Launches at peak US trading hours daily`);
   console.log(`   Agent ID: ${process.env.CLAWPUMP_AGENT_ID || "trendhunter-001"}`);
   console.log(`   Wallet: ${process.env.SOLANA_WALLET_ADDRESS?.slice(0, 8)}...`);
