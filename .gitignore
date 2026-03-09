@@ -1,6 +1,3 @@
-node_modules/
-.env
-launches.json
-*.png
-*.jpg
-/tmp/
+.gitignore
+/scheduler_state.json
+/.scheduler_state.json
