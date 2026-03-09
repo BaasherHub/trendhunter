@@ -1,9 +1,9 @@
-import cron from "node-cron";
 import { getTrendingTopics, pickBestTopic } from "./trends.js";
 import { generateTokenConcept } from "./generator.js";
 import { generateTokenImage } from "./imagegen.js";
 import { uploadImage, launchToken, checkEarnings, checkTreasury } from "./clawpump.js";
 import { savelaunch, loadHistory, printSummary } from "./logger.js";
+import { startScheduler, getNextLaunchTime } from "./scheduler.js";
 import fs from "fs";
 
 function validateEnv() {
@@ -139,16 +139,12 @@ if (args.includes("--now") || process.env.RUN_NOW === "true") {
 } else if (args.includes("--history")) {
   printSummary(loadHistory());
 } else {
-  // 16:01 UTC = 12:01 PM EST
-  // We use :01 (1 min past the hour) as a buffer because ClawPump enforces
-  // a strict 24-hour cooldown. Launching at exactly :00 risks hitting the
-  // 23h59m mark and getting a rate-limit error. The extra minute guarantees
-  // we are always safely past the 24h window.
-  const CRON_SCHEDULE = process.env.CRON_SCHEDULE || "1 16 * * *";
-  console.log(`⏰ TrendHunter Bot started — scheduled: ${CRON_SCHEDULE} (UTC = 12:01 PM EST)`);
-  console.log(`   Launches at peak US trading hours daily`);
+  const nextLaunch = getNextLaunchTime();
+  console.log(`⏰ TrendHunter Bot started — dynamic 24h+1min scheduling`);
+  console.log(`   Next scheduled launch: ${nextLaunch.toISOString()}`);
   console.log(`   Agent ID: ${process.env.CLAWPUMP_AGENT_ID || "trendhunter-001"}`);
   console.log(`   Wallet: ${process.env.SOLANA_WALLET_ADDRESS?.slice(0, 8)}...`);
-  cron.schedule(CRON_SCHEDULE, runDailyLaunch, { timezone: "UTC" });
+  console.log(`   Each launch schedules the next one exactly 24h+1min later`);
+  startScheduler(runDailyLaunch);
   console.log("\n✅ Bot is running. Waiting for scheduled time...");
 }

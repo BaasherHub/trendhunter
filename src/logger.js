@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 
-const LOG_FILE = "./launches.json";
+const LOG_FILE = process.env.LAUNCH_HISTORY_FILE || "./launches.json";
 
 /**
  * Load launch history from file
