@@ -1,32 +1,46 @@
-class Scheduler {
-    constructor() {
-        this.lastLaunchTime = null;
-    }
+const fs = require('fs');
+const path = require('path');
 
-    launch() {
-        const currentTime = new Date();
-        const currentTimeUTC = currentTime.getTime() + currentTime.getTimezoneOffset() * 60000;
-        
-        if (this.lastLaunchTime) {
-            const timeDifference = currentTimeUTC - this.lastLaunchTime;
-            if (timeDifference < 24 * 60 * 60 * 1000) {
-                console.log("Skipping launch. Launched less than 24 hours ago.");
-                return;
-            }
-        }
+const STATE_FILE = path.join(__dirname, 'scheduler_state.json');
 
-        this.lastLaunchTime = currentTimeUTC;
-        console.log("Launching task...");
-        // Place the task logic here
+let lastLaunchTime = null;
 
-        this.scheduleNextLaunch();
-    }
-
-    scheduleNextLaunch() {
-        const nextLaunchTime = new Date(this.lastLaunchTime + 24 * 60 * 60 * 1000);
-        console.log(`Next launch scheduled for: ${nextLaunchTime.toISOString()}`);
+// Load the scheduler state
+function loadSchedulerState() {
+    if (fs.existsSync(STATE_FILE)) {
+        const data = JSON.parse(fs.readFileSync(STATE_FILE));
+        lastLaunchTime = new Date(data.lastLaunchTime);
     }
 }
 
-const scheduler = new Scheduler();
-scheduler.launch(); // Call to start the scheduling
+// Save the scheduler state
+function saveSchedulerState() {
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ lastLaunchTime: lastLaunchTime }));
+}
+
+// Calculate next launch time
+function calculateNextLaunch() {
+    if (!lastLaunchTime) return new Date(Date.now() + (24 * 60 * 60 * 1000) + 60000); // 24 hours + 1 minute
+    return new Date(lastLaunchTime.getTime() + (24 * 60 * 60 * 1000) + 60000);
+}
+
+// Check if launch is due
+function isLaunchDue() {
+    return new Date() >= calculateNextLaunch();
+}
+
+// Reschedule after each launch
+function reschedule() {
+    lastLaunchTime = new Date();
+    saveSchedulerState();
+}
+
+// Call this function before starting a launch
+loadSchedulerState();
+if (isLaunchDue()) {
+    // Perform launch operation here
+    // ...
+
+    // After launch
+    reschedule();
+}
